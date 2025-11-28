@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Star, CheckCircle, AlertCircle, Gift, Plus, Trash2, Edit3, 
-  LogOut, UserPlus, ArrowLeft, Lock, Mail, Key, AlertTriangle, 
-  Calendar, ChevronLeft, ChevronRight, RotateCcw, Clock, Pencil 
+  LogOut, UserPlus, ArrowLeft, Lock, Mail, Key, 
+  Calendar, ChevronLeft, ChevronRight, RotateCcw, Clock 
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -36,7 +36,7 @@ const db = getFirestore(app);
 // 数据集合名称
 const APP_COLLECTION_ID = 'star-tracker-production'; 
 
-// --- 默认数据模板 (升级版，支持循环) ---
+// --- 默认数据模板 ---
 const DEFAULT_TASKS = [
   { id: 1, title: '按时起床 (7:00前)', points: 1, recurrence: { type: 'daily' }, completedDates: [] },
   { id: 2, title: '完成家庭作业', points: 3, recurrence: { type: 'daily' }, completedDates: [] },
@@ -55,6 +55,7 @@ const DEFAULT_REWARDS = [
 
 // --- 辅助函数 ---
 const formatDate = (date) => {
+  if (!date) return '';
   return date.toISOString().split('T')[0]; // 返回 YYYY-MM-DD
 };
 
@@ -114,7 +115,7 @@ export default function App() {
         tasks: DEFAULT_TASKS,
         penalties: DEFAULT_PENALTIES,
         rewards: DEFAULT_REWARDS,
-        history: [], // 新增历史记录字段
+        history: [], 
         createdAt: new Date().toISOString(),
       });
     } catch (e) {
@@ -304,12 +305,13 @@ const LoginScreen = () => {
   );
 };
 
-// --- 组件: 编辑用户模态框 ---
+// --- 组件: 编辑用户模态框 (防崩溃优化) ---
 const EditProfileModal = ({ isOpen, onClose, onConfirm, initialName }) => {
-  const [name, setName] = useState(initialName);
+  // 使用 || '' 防止 initialName 为 null/undefined 导致 Input 报错
+  const [name, setName] = useState(initialName || '');
   
   useEffect(() => {
-    setName(initialName);
+    setName(initialName || '');
   }, [initialName, isOpen]);
 
   if (!isOpen) return null;
@@ -405,15 +407,16 @@ const ProfileSelector = ({ user, profiles, onCreate, onSelect, onDelete, onUpdat
                 className="w-full bg-slate-800 hover:bg-slate-700 border-2 border-slate-700 hover:border-blue-500 transition-all rounded-xl p-6 flex flex-col items-center gap-3 relative overflow-hidden h-full"
               >
                 <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-2xl font-bold shadow-lg z-10">
-                  {p.name[0].toUpperCase()}
+                  {/* 防止名字为空报错 */}
+                  {(p.name && p.name[0]) ? p.name[0].toUpperCase() : '?'}
                 </div>
-                <div className="text-lg font-bold truncate w-full text-center z-10 mb-4">{p.name}</div>
+                <div className="text-lg font-bold truncate w-full text-center z-10 mb-4">{p.name || '未命名'}</div>
                 <div className="flex items-center gap-1 text-xs text-yellow-500 bg-yellow-500/10 px-2 py-1 rounded-full z-10 absolute bottom-3">
-                  <Star className="w-3 h-3 fill-yellow-500" /> {p.stars}
+                  <Star className="w-3 h-3 fill-yellow-500" /> {p.stars || 0}
                 </div>
               </button>
               
-              {/* 删除按钮 (右上角) */}
+              {/* 删除按钮 */}
               <button 
                 onClick={(e) => { e.stopPropagation(); setDeleteModal({ isOpen: true, profileId: p.id, profileName: p.name }); }}
                 className="absolute top-2 right-2 p-2 text-slate-600 hover:text-red-500 hover:bg-slate-900 rounded-full z-20"
@@ -421,13 +424,13 @@ const ProfileSelector = ({ user, profiles, onCreate, onSelect, onDelete, onUpdat
                 <Trash2 className="w-4 h-4" />
               </button>
 
-              {/* 编辑按钮 (左下角 - 新增功能) */}
+              {/* 编辑按钮 (替换为 Edit3 以防崩溃) */}
               <button 
                 onClick={(e) => { e.stopPropagation(); setEditModal({ isOpen: true, profileId: p.id, profileName: p.name }); }}
                 className="absolute bottom-2 left-2 p-2 text-slate-600 hover:text-blue-500 hover:bg-slate-900 rounded-full z-20"
                 title="修改名字"
               >
-                <Pencil className="w-4 h-4" />
+                <Edit3 className="w-4 h-4" />
               </button>
             </div>
           ))}
@@ -468,9 +471,8 @@ const ProfileSelector = ({ user, profiles, onCreate, onSelect, onDelete, onUpdat
 const StarSystem = ({ user, profile, onBack }) => {
   const [activeTab, setActiveTab] = useState('tasks');
   const [notification, setNotification] = useState(null);
-  const [viewDate, setViewDate] = useState(new Date()); // 当前查看的日历日期
+  const [viewDate, setViewDate] = useState(new Date()); 
 
-  // 辅助: 格式化 viewDate
   const viewDateStr = formatDate(viewDate);
   const isToday = viewDateStr === formatDate(new Date());
 
@@ -489,9 +491,8 @@ const StarSystem = ({ user, profile, onBack }) => {
     }
   };
 
-  // --- 核心业务逻辑: 任务/惩罚/撤销 ---
+  // --- 核心业务逻辑 ---
 
-  // 完成任务
   const handleTaskComplete = (taskId) => {
     const task = profile.tasks.find(t => t.id === taskId);
     if (!task) return;
@@ -501,25 +502,22 @@ const StarSystem = ({ user, profile, onBack }) => {
 
     const newStars = (profile.stars || 0) + task.points;
     
-    // 更新任务状态
     const newTasks = profile.tasks.map(t => 
       t.id === taskId ? { ...t, completedDates: [...(t.completedDates || []), viewDateStr] } : t
     );
 
-    // 添加历史记录
     const logId = Date.now().toString();
     const newHistory = [
       { id: logId, type: 'task', title: task.title, points: task.points, date: new Date().toISOString(), targetDate: viewDateStr },
       ...(profile.history || [])
-    ].slice(0, 50); // 只保留最近50条
+    ].slice(0, 50);
 
     updateProfile({ stars: newStars, tasks: newTasks, history: newHistory });
     showNotification(`完成！+${task.points} 星星`);
   };
 
-  // 记录惩罚
   const handlePenalty = (item) => {
-    if (profile.stars <= 0) {
+    if ((profile.stars || 0) <= 0) {
       showNotification('星星已经是0了，无法扣除', 'error');
       return;
     }
@@ -538,9 +536,8 @@ const StarSystem = ({ user, profile, onBack }) => {
     showNotification(`已记录: -${deduction}`, 'error');
   };
 
-  // 兑换奖励
   const handleRedeem = (item) => {
-    if (profile.stars >= item.cost) {
+    if ((profile.stars || 0) >= item.cost) {
       const logId = Date.now().toString();
       const newHistory = [
         { id: logId, type: 'reward', title: item.title, cost: item.cost, date: new Date().toISOString() },
@@ -553,28 +550,24 @@ const StarSystem = ({ user, profile, onBack }) => {
       });
       showNotification(`兑换成功！消耗 ${item.cost} 星星`);
     } else {
-      showNotification(`星星不足！还差 ${item.cost - profile.stars} 颗`, 'error');
+      showNotification(`星星不足！还差 ${item.cost - (profile.stars || 0)} 颗`, 'error');
     }
   };
 
-  // 撤销操作 (历史记录通用)
   const handleUndo = (log) => {
     let updates = {};
     const currentHistory = profile.history || [];
     
-    // 从历史中移除该条目
     const newHistory = currentHistory.filter(h => h.id !== log.id);
     updates.history = newHistory;
 
-    // 根据类型回滚星星
     if (log.type === 'penalty' || log.type === 'reward') {
       updates.stars = (profile.stars || 0) + log.cost;
     } else if (log.type === 'task') {
       updates.stars = Math.max(0, (profile.stars || 0) - log.points);
-      // 如果是任务，还需要移除 completedDate
       if (log.targetDate) {
          const newTasks = profile.tasks.map(t => {
-           if (t.title === log.title) { // 简单匹配，理想情况应用ID匹配，但log里为了简单存了title
+           if (t.title === log.title) { 
              return { ...t, completedDates: (t.completedDates || []).filter(d => d !== log.targetDate) };
            }
            return t;
@@ -587,10 +580,8 @@ const StarSystem = ({ user, profile, onBack }) => {
     showNotification('操作已撤销', 'success');
   };
 
-  // 管理: 添加项目
   const handleAddItem = (type, item) => {
     const id = Date.now();
-    // 默认新任务为每日任务
     const newItem = type === 'task' 
       ? { ...item, id, recurrence: item.recurrence || { type: 'daily' }, completedDates: [] }
       : { ...item, id };
@@ -611,31 +602,28 @@ const StarSystem = ({ user, profile, onBack }) => {
     if (type === 'reward') updateProfile({ rewards: profile.rewards.filter(r => r.id !== id) });
   };
 
-  // --- 日历切换逻辑 ---
   const changeDate = (days) => {
     const newDate = new Date(viewDate);
     newDate.setDate(newDate.getDate() + days);
     setViewDate(newDate);
   };
 
-  // --- 过滤当日可见任务 ---
+  // --- 过滤当日可见任务 (安全优化) ---
   const visibleTasks = (profile.tasks || []).filter(task => {
     const rec = task.recurrence || { type: 'daily' };
     if (rec.type === 'daily') return true;
     if (rec.type === 'weekly') {
-      const day = viewDate.getDay(); // 0-6 (周日-周六)
-      // 处理JS周日为0，通常用户习惯1-7
-      // 假设 rec.value 存储的是 [1,3,5] 对应 周一,周三,周五. 周日存为0
-      return rec.value && rec.value.includes(day);
+      const day = viewDate.getDay(); 
+      // 增加安全性检查: rec.value 必须存在且是数组
+      return Array.isArray(rec.value) && rec.value.includes(day);
     }
     if (rec.type === 'monthly') {
       const date = viewDate.getDate();
-      return rec.value && rec.value.includes(date);
+      return Array.isArray(rec.value) && rec.value.includes(date);
     }
     return true;
   });
 
-  // --- 渲染 ---
   return (
     <div className="min-h-screen bg-slate-900 text-slate-50 font-sans pb-24">
       {notification && (
@@ -655,11 +643,10 @@ const StarSystem = ({ user, profile, onBack }) => {
             </button>
             <div className="flex items-center gap-2 bg-slate-900 px-4 py-1.5 rounded-full border border-yellow-500/30">
               <Star className="w-5 h-5 text-yellow-400 fill-yellow-400" />
-              <span className="text-2xl font-black text-yellow-400 font-mono">{profile.stars}</span>
+              <span className="text-2xl font-black text-yellow-400 font-mono">{profile.stars || 0}</span>
             </div>
           </div>
           
-          {/* 日历导航条 */}
           <div className="flex items-center justify-between bg-slate-900/50 rounded-lg p-1">
             <button onClick={() => changeDate(-1)} className="p-2 hover:bg-slate-700 rounded-md text-slate-400"><ChevronLeft className="w-5 h-5" /></button>
             <div className="flex flex-col items-center">
@@ -769,8 +756,9 @@ const StarSystem = ({ user, profile, onBack }) => {
                 </h2>
                 <div className="grid grid-cols-2 gap-3">
                   {(profile.rewards || []).map(item => {
-                    const canAfford = profile.stars >= item.cost;
-                    const progress = Math.min((profile.stars / item.cost) * 100, 100);
+                    const stars = profile.stars || 0;
+                    const canAfford = stars >= item.cost;
+                    const progress = Math.min((stars / item.cost) * 100, 100);
                     
                     return (
                       <div key={item.id} className={`bg-slate-800 p-4 rounded-xl border-2 flex flex-col justify-between h-48 transition-all
@@ -783,7 +771,6 @@ const StarSystem = ({ user, profile, onBack }) => {
                             <Star className="w-4 h-4 fill-yellow-400" /> {item.cost}
                           </div>
                           
-                          {/* 进度条 (新增) */}
                           <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden">
                             <div className="bg-purple-500 h-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
                           </div>
@@ -797,7 +784,7 @@ const StarSystem = ({ user, profile, onBack }) => {
                                 : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                               }`}
                           >
-                            {canAfford ? '立即兑换' : `还差 ${item.cost - profile.stars}`}
+                            {canAfford ? '立即兑换' : `还差 ${item.cost - stars}`}
                           </button>
                         </div>
                       </div>
@@ -839,7 +826,6 @@ const StarSystem = ({ user, profile, onBack }) => {
   );
 };
 
-// --- 子组件: 历史记录列表 (新增) ---
 const HistoryList = ({ title, type, history, onUndo }) => {
   const filtered = history.filter(h => h.type === type);
   if (filtered.length === 0) return null;
@@ -889,15 +875,13 @@ const NavButton = ({ active, onClick, icon, label, color }) => (
   </button>
 );
 
-// --- 管理面板 (升级循环设置) ---
 const ManagementPanel = ({ tasks, penalties, rewards, onAdd, onDelete }) => {
   const [section, setSection] = useState('task'); 
   const [newTitle, setNewTitle] = useState('');
   const [newVal, setNewVal] = useState('');
   
-  // 循环设置状态
-  const [recurType, setRecurType] = useState('daily'); // daily, weekly, monthly
-  const [recurDays, setRecurDays] = useState([]); // [1,3,5] for Mon,Wed,Fri
+  const [recurType, setRecurType] = useState('daily'); 
+  const [recurDays, setRecurDays] = useState([]); 
 
   const handleAdd = (e) => {
     e.preventDefault();
@@ -949,7 +933,6 @@ const ManagementPanel = ({ tasks, penalties, rewards, onAdd, onDelete }) => {
             onChange={(e) => setNewTitle(e.target.value)}
           />
           
-          {/* 任务循环设置 (仅任务可见) */}
           {section === 'task' && (
             <div className="bg-slate-700/50 p-3 rounded-lg space-y-2">
               <div className="flex gap-2 text-xs">
