@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   Star, CheckCircle, AlertCircle, Gift, Plus, Trash2, Edit3, 
   LogOut, UserPlus, ArrowLeft, Lock, Mail, Key, 
-  Calendar, ChevronLeft, ChevronRight, RotateCcw, Clock 
+  Calendar as CalendarIcon, ChevronLeft, ChevronRight, RotateCcw, Clock, 
+  Settings, X, Menu, LayoutDashboard
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -11,7 +12,9 @@ import {
   signOut, 
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  signInAnonymously
+  signInAnonymously,
+  EmailAuthProvider,
+  reauthenticateWithCredential
 } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
@@ -56,7 +59,11 @@ const DEFAULT_REWARDS = [
 // --- 辅助函数 ---
 const formatDate = (date) => {
   if (!date) return '';
-  return date.toISOString().split('T')[0]; // 返回 YYYY-MM-DD
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
 const getWeekDayName = (dayIndex) => {
@@ -242,7 +249,7 @@ const LoginScreen = () => {
         <div className="bg-blue-500/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6">
           <Lock className="w-8 h-8 text-blue-400" />
         </div>
-        <h1 className="text-2xl font-bold mb-2 text-center">比乐时成长系统</h1>
+        <h1 className="text-2xl font-bold mb-2 text-center text-white">比乐时成长系统</h1>
         <p className="text-slate-400 mb-8 text-sm text-center">请登录以同步您的云端数据</p>
         
         <form onSubmit={handleAuth} className="space-y-4">
@@ -305,36 +312,103 @@ const LoginScreen = () => {
   );
 };
 
-// --- 组件: 编辑用户模态框 (防崩溃优化) ---
+// --- 组件: 编辑用户模态框 ---
 const EditProfileModal = ({ isOpen, onClose, onConfirm, initialName }) => {
-  // 使用 || '' 防止 initialName 为 null/undefined 导致 Input 报错
   const [name, setName] = useState(initialName || '');
-  
-  useEffect(() => {
-    setName(initialName || '');
-  }, [initialName, isOpen]);
-
+  useEffect(() => { setName(initialName || ''); }, [initialName, isOpen]);
   if (!isOpen) return null;
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
       <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
         <h3 className="text-xl font-bold text-center text-white mb-4">修改名字</h3>
         <input 
-          autoFocus
-          type="text" 
+          autoFocus type="text" 
           className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white mb-6 focus:outline-none focus:border-blue-500"
-          value={name}
-          onChange={e => setName(e.target.value)}
+          value={name} onChange={e => setName(e.target.value)}
         />
         <div className="flex gap-3">
           <button onClick={onClose} className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-medium text-slate-300">取消</button>
-          <button 
-            onClick={() => { if(name.trim()) onConfirm(name); }} 
-            className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-white"
-          >
-            保存
-          </button>
+          <button onClick={() => { if(name.trim()) onConfirm(name); }} className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-white">保存</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- 组件: 修改星星验证模态框 ---
+const EditStarsModal = ({ isOpen, onClose, onConfirm, currentStars, userEmail }) => {
+  const [newStars, setNewStars] = useState(currentStars);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  useEffect(() => {
+    setNewStars(currentStars);
+    setPassword('');
+    setError('');
+  }, [currentStars, isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleConfirm = async () => {
+    if (!password) { setError("请输入登录密码以验证身份"); return; }
+    setIsVerifying(true);
+    try {
+       const credential = EmailAuthProvider.credential(userEmail, password);
+       await reauthenticateWithCredential(getAuth().currentUser, credential);
+       onConfirm(parseInt(newStars));
+       onClose();
+    } catch (err) {
+       console.error(err);
+       setError("密码错误，验证失败");
+    } finally {
+       setIsVerifying(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-bold text-white">修改星星数量</h3>
+          <button onClick={onClose} className="text-slate-500 hover:text-white"><X className="w-5 h-5"/></button>
+        </div>
+        
+        <div className="space-y-4">
+           <div>
+             <label className="text-xs text-slate-400 mb-1 block">当前星星: {currentStars}</label>
+             <div className="relative">
+                <Star className="absolute left-3 top-3 w-5 h-5 text-yellow-500" />
+                <input 
+                  type="number" 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-white focus:outline-none focus:border-yellow-500 font-mono text-lg"
+                  value={newStars}
+                  onChange={e => setNewStars(e.target.value)}
+                />
+             </div>
+           </div>
+
+           <div className="bg-slate-700/30 p-4 rounded-lg border border-slate-700/50">
+             <p className="text-xs text-red-300 mb-2 flex items-center gap-1">
+               <Lock className="w-3 h-3"/> 安全验证 (防止误操作)
+             </p>
+             <input 
+                type="password" 
+                placeholder="请输入您的登录密码"
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+             />
+             {error && <p className="text-red-500 text-xs mt-2">{error}</p>}
+           </div>
+
+           <button 
+             onClick={handleConfirm}
+             disabled={isVerifying}
+             className="w-full py-3 bg-yellow-600 hover:bg-yellow-500 disabled:bg-slate-600 rounded-xl font-bold text-white shadow-lg shadow-yellow-600/20"
+           >
+             {isVerifying ? '验证中...' : '确认修改'}
+           </button>
         </div>
       </div>
     </div>
@@ -365,22 +439,20 @@ const ProfileSelector = ({ user, profiles, onCreate, onSelect, onDelete, onUpdat
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-50 p-6">
-      {/* 删除确认框 */}
+    <div className="min-h-screen bg-slate-900 text-slate-50 p-6 flex flex-col items-center justify-center">
       {deleteModal.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full">
-            <h3 className="text-xl font-bold text-center mb-2">删除用户?</h3>
+            <h3 className="text-xl font-bold text-center text-white mb-2">删除用户?</h3>
             <p className="text-slate-400 text-center mb-6">确定删除 {deleteModal.profileName} 吗？所有数据将丢失。</p>
             <div className="flex gap-3">
-              <button onClick={() => setDeleteModal({ ...deleteModal, isOpen: false })} className="flex-1 py-3 bg-slate-700 rounded-xl">取消</button>
-              <button onClick={() => { onDelete(deleteModal.profileId); setDeleteModal({ ...deleteModal, isOpen: false }); }} className="flex-1 py-3 bg-red-600 rounded-xl font-bold">删除</button>
+              <button onClick={() => setDeleteModal({ ...deleteModal, isOpen: false })} className="flex-1 py-3 bg-slate-700 rounded-xl text-slate-200">取消</button>
+              <button onClick={() => { onDelete(deleteModal.profileId); setDeleteModal({ ...deleteModal, isOpen: false }); }} className="flex-1 py-3 bg-red-600 rounded-xl font-bold text-white">删除</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 编辑确认框 */}
       <EditProfileModal 
         isOpen={editModal.isOpen}
         initialName={editModal.profileName}
@@ -388,49 +460,46 @@ const ProfileSelector = ({ user, profiles, onCreate, onSelect, onDelete, onUpdat
         onConfirm={handleEditConfirm}
       />
 
-      <div className="max-w-md mx-auto">
-        <header className="mb-8 flex justify-between items-end">
+      <div className="w-full max-w-4xl">
+        <header className="mb-12 flex justify-between items-end">
            <div>
-             <h1 className="text-2xl font-bold text-slate-200">谁在赚星星？</h1>
+             <h1 className="text-3xl font-bold text-slate-200">谁在赚星星？</h1>
              <p className="text-slate-500 text-sm mt-1">管理员: {user.isAnonymous ? '游客' : user.email}</p>
            </div>
-           <button onClick={onLogout} className="text-xs flex items-center gap-1 text-slate-500 hover:text-slate-300 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700">
-             <LogOut className="w-3 h-3" /> 退出
+           <button onClick={onLogout} className="text-sm flex items-center gap-1 text-slate-400 hover:text-white bg-slate-800 px-4 py-2 rounded-full border border-slate-700 hover:bg-slate-700 transition-colors">
+             <LogOut className="w-4 h-4" /> 退出
            </button>
         </header>
 
-        <div className="grid grid-cols-2 gap-4 mb-8">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
           {profiles.map(p => (
-            <div key={p.id} className="relative group">
+            <div key={p.id} className="relative group aspect-square">
               <button 
                 onClick={() => onSelect(p)}
-                className="w-full bg-slate-800 hover:bg-slate-700 border-2 border-slate-700 hover:border-blue-500 transition-all rounded-xl p-6 flex flex-col items-center gap-3 relative overflow-hidden h-full"
+                className="w-full h-full bg-slate-800 hover:bg-slate-700 border-2 border-slate-700 hover:border-blue-500 transition-all rounded-2xl p-6 flex flex-col items-center justify-center gap-4 relative overflow-hidden"
               >
-                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-2xl font-bold shadow-lg z-10">
-                  {/* 防止名字为空报错 */}
+                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-3xl font-bold shadow-lg z-10 text-white">
                   {(p.name && p.name[0]) ? p.name[0].toUpperCase() : '?'}
                 </div>
-                <div className="text-lg font-bold truncate w-full text-center z-10 mb-4">{p.name || '未命名'}</div>
-                <div className="flex items-center gap-1 text-xs text-yellow-500 bg-yellow-500/10 px-2 py-1 rounded-full z-10 absolute bottom-3">
-                  <Star className="w-3 h-3 fill-yellow-500" /> {p.stars || 0}
+                <div className="text-xl font-bold truncate w-full text-center z-10 text-white">{p.name || '未命名'}</div>
+                <div className="flex items-center gap-1 text-sm text-yellow-500 bg-yellow-500/10 px-3 py-1.5 rounded-full z-10">
+                  <Star className="w-4 h-4 fill-yellow-500" /> {p.stars || 0}
                 </div>
               </button>
               
-              {/* 删除按钮 */}
               <button 
                 onClick={(e) => { e.stopPropagation(); setDeleteModal({ isOpen: true, profileId: p.id, profileName: p.name }); }}
-                className="absolute top-2 right-2 p-2 text-slate-600 hover:text-red-500 hover:bg-slate-900 rounded-full z-20"
+                className="absolute top-3 right-3 p-2 text-slate-600 hover:text-red-500 hover:bg-slate-900 rounded-full z-20 opacity-0 group-hover:opacity-100 transition-opacity"
               >
-                <Trash2 className="w-4 h-4" />
+                <Trash2 className="w-5 h-5" />
               </button>
 
-              {/* 编辑按钮 (替换为 Edit3 以防崩溃) */}
               <button 
                 onClick={(e) => { e.stopPropagation(); setEditModal({ isOpen: true, profileId: p.id, profileName: p.name }); }}
-                className="absolute bottom-2 left-2 p-2 text-slate-600 hover:text-blue-500 hover:bg-slate-900 rounded-full z-20"
+                className="absolute bottom-3 left-3 p-2 text-slate-600 hover:text-blue-500 hover:bg-slate-900 rounded-full z-20 opacity-0 group-hover:opacity-100 transition-opacity"
                 title="修改名字"
               >
-                <Edit3 className="w-4 h-4" />
+                <Edit3 className="w-5 h-5" />
               </button>
             </div>
           ))}
@@ -438,25 +507,25 @@ const ProfileSelector = ({ user, profiles, onCreate, onSelect, onDelete, onUpdat
           {!isAdding ? (
             <button 
               onClick={() => setIsAdding(true)}
-              className="w-full bg-slate-800/50 border-2 border-dashed border-slate-700 hover:border-slate-500 text-slate-500 hover:text-slate-300 transition-all rounded-xl p-6 flex flex-col items-center justify-center gap-3 min-h-[160px]"
+              className="w-full h-full aspect-square bg-slate-800/50 border-2 border-dashed border-slate-700 hover:border-slate-500 text-slate-500 hover:text-slate-300 transition-all rounded-2xl flex flex-col items-center justify-center gap-3 group"
             >
-              <UserPlus className="w-10 h-10 opacity-50" />
+              <div className="w-16 h-16 rounded-full bg-slate-800 group-hover:bg-slate-700 flex items-center justify-center transition-colors">
+                <UserPlus className="w-8 h-8 opacity-50" />
+              </div>
               <span className="font-medium">添加用户</span>
             </button>
           ) : (
-            <div className="w-full bg-slate-800 border-2 border-slate-600 rounded-xl p-4 flex flex-col justify-center min-h-[160px]">
-              <form onSubmit={handleSubmit}>
+            <div className="w-full h-full aspect-square bg-slate-800 border-2 border-slate-600 rounded-2xl p-6 flex flex-col justify-center">
+              <form onSubmit={handleSubmit} className="flex flex-col h-full justify-center">
+                <h3 className="text-center font-bold text-white mb-4">新用户</h3>
                 <input 
-                  autoFocus
-                  type="text" 
-                  placeholder="输入名字"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white mb-3 text-center focus:outline-none focus:border-blue-500"
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
+                  autoFocus type="text" placeholder="输入名字"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-white mb-4 text-center focus:outline-none focus:border-blue-500"
+                  value={newName} onChange={e => setNewName(e.target.value)}
                 />
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => setIsAdding(false)} className="flex-1 py-2 text-xs bg-slate-700 rounded-lg hover:bg-slate-600">取消</button>
-                  <button type="submit" className="flex-1 py-2 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-500">确定</button>
+                  <button type="button" onClick={() => setIsAdding(false)} className="flex-1 py-2 text-sm bg-slate-700 rounded-lg hover:bg-slate-600 text-slate-300">取消</button>
+                  <button type="submit" className="flex-1 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-500">确定</button>
                 </div>
               </form>
             </div>
@@ -467,11 +536,97 @@ const ProfileSelector = ({ user, profiles, onCreate, onSelect, onDelete, onUpdat
   );
 };
 
+// --- 组件: 月历视图 ---
+const MonthCalendar = ({ viewDate, onChangeDate, hasTasksMap }) => {
+  const [currentMonth, setCurrentMonth] = useState(new Date(viewDate));
+
+  useEffect(() => {
+    setCurrentMonth(new Date(viewDate));
+  }, [viewDate]);
+
+  const year = currentMonth.getFullYear();
+  const month = currentMonth.getMonth(); // 0-11
+  const firstDay = new Date(year, month, 1);
+  const startDayOfWeek = firstDay.getDay(); 
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const blanks = Array(startDayOfWeek).fill(null);
+  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const totalSlots = [...blanks, ...days];
+
+  const handlePrevMonth = () => setCurrentMonth(new Date(year, month - 1, 1));
+  const handleNextMonth = () => setCurrentMonth(new Date(year, month + 1, 1));
+  
+  const isSelected = (d) => {
+    if (!d) return false;
+    const target = new Date(year, month, d);
+    return formatDate(target) === formatDate(viewDate);
+  };
+
+  const isToday = (d) => {
+    if (!d) return false;
+    const target = new Date(year, month, d);
+    return formatDate(target) === formatDate(new Date());
+  };
+
+  return (
+    <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 shadow-lg h-full flex flex-col">
+      <div className="flex justify-between items-center mb-4">
+        <button onClick={handlePrevMonth} className="p-1 hover:bg-slate-700 rounded"><ChevronLeft className="w-5 h-5 text-slate-400"/></button>
+        <div className="font-bold text-lg text-slate-200">
+           {year}年 {month + 1}月
+        </div>
+        <button onClick={handleNextMonth} className="p-1 hover:bg-slate-700 rounded"><ChevronRight className="w-5 h-5 text-slate-400"/></button>
+      </div>
+
+      <div className="grid grid-cols-7 gap-1 mb-2">
+        {['日','一','二','三','四','五','六'].map(d => (
+          <div key={d} className="text-center text-xs text-slate-500 font-bold">{d}</div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7 gap-1 flex-1 content-start">
+        {totalSlots.map((d, index) => {
+          if (!d) return <div key={index} className="aspect-square"></div>;
+          
+          const dateStr = formatDate(new Date(year, month, d));
+          const hasTask = hasTasksMap[dateStr];
+
+          return (
+            <button 
+              key={index}
+              onClick={() => onChangeDate(new Date(year, month, d))}
+              className={`aspect-square rounded-lg flex flex-col items-center justify-center relative transition-all
+                ${isSelected(d) ? 'bg-blue-600 text-white font-bold shadow-lg shadow-blue-500/30' : 'hover:bg-slate-700 text-slate-300'}
+                ${isToday(d) && !isSelected(d) ? 'border border-blue-500/50 text-blue-400' : ''}
+              `}
+            >
+              <span className="text-sm">{d}</span>
+              {hasTask && !isSelected(d) && (
+                <span className="w-1 h-1 bg-yellow-500 rounded-full absolute bottom-1.5"></span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      
+      <div className="mt-4 flex justify-center border-t border-slate-700 pt-3">
+        <button 
+          onClick={() => onChangeDate(new Date())}
+          className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 bg-blue-500/10 px-3 py-1.5 rounded-full"
+        >
+          <RotateCcw className="w-3 h-3" /> 回到今天
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // --- 组件: 主系统逻辑 ---
 const StarSystem = ({ user, profile, onBack }) => {
   const [activeTab, setActiveTab] = useState('tasks');
   const [notification, setNotification] = useState(null);
   const [viewDate, setViewDate] = useState(new Date()); 
+  const [isStarModalOpen, setIsStarModalOpen] = useState(false);
 
   const viewDateStr = formatDate(viewDate);
   const isToday = viewDateStr === formatDate(new Date());
@@ -491,48 +646,34 @@ const StarSystem = ({ user, profile, onBack }) => {
     }
   };
 
-  // --- 核心业务逻辑 ---
-
+  // ... (业务逻辑函数保持不变，handleTaskComplete, handlePenalty, etc.)
   const handleTaskComplete = (taskId) => {
     const task = profile.tasks.find(t => t.id === taskId);
     if (!task) return;
-
     const completedDates = task.completedDates || [];
     if (completedDates.includes(viewDateStr)) return;
-
     const newStars = (profile.stars || 0) + task.points;
-    
     const newTasks = profile.tasks.map(t => 
       t.id === taskId ? { ...t, completedDates: [...(t.completedDates || []), viewDateStr] } : t
     );
-
     const logId = Date.now().toString();
     const newHistory = [
       { id: logId, type: 'task', title: task.title, points: task.points, date: new Date().toISOString(), targetDate: viewDateStr },
       ...(profile.history || [])
     ].slice(0, 50);
-
     updateProfile({ stars: newStars, tasks: newTasks, history: newHistory });
     showNotification(`完成！+${task.points} 星星`);
   };
 
   const handlePenalty = (item) => {
-    if ((profile.stars || 0) <= 0) {
-      showNotification('星星已经是0了，无法扣除', 'error');
-      return;
-    }
+    if ((profile.stars || 0) <= 0) { showNotification('星星已经是0了，无法扣除', 'error'); return; }
     const deduction = Math.min(profile.stars, item.cost);
     const logId = Date.now().toString();
-
     const newHistory = [
       { id: logId, type: 'penalty', title: item.title, cost: deduction, date: new Date().toISOString() },
       ...(profile.history || [])
     ].slice(0, 50);
-
-    updateProfile({ 
-      stars: profile.stars - deduction,
-      history: newHistory
-    });
+    updateProfile({ stars: profile.stars - deduction, history: newHistory });
     showNotification(`已记录: -${deduction}`, 'error');
   };
 
@@ -543,11 +684,7 @@ const StarSystem = ({ user, profile, onBack }) => {
         { id: logId, type: 'reward', title: item.title, cost: item.cost, date: new Date().toISOString() },
         ...(profile.history || [])
       ].slice(0, 50);
-
-      updateProfile({ 
-        stars: profile.stars - item.cost,
-        history: newHistory
-      });
+      updateProfile({ stars: profile.stars - item.cost, history: newHistory });
       showNotification(`兑换成功！消耗 ${item.cost} 星星`);
     } else {
       showNotification(`星星不足！还差 ${item.cost - (profile.stars || 0)} 颗`, 'error');
@@ -557,10 +694,8 @@ const StarSystem = ({ user, profile, onBack }) => {
   const handleUndo = (log) => {
     let updates = {};
     const currentHistory = profile.history || [];
-    
     const newHistory = currentHistory.filter(h => h.id !== log.id);
     updates.history = newHistory;
-
     if (log.type === 'penalty' || log.type === 'reward') {
       updates.stars = (profile.stars || 0) + log.cost;
     } else if (log.type === 'task') {
@@ -575,7 +710,6 @@ const StarSystem = ({ user, profile, onBack }) => {
          updates.tasks = newTasks;
       }
     }
-
     updateProfile(updates);
     showNotification('操作已撤销', 'success');
   };
@@ -602,19 +736,16 @@ const StarSystem = ({ user, profile, onBack }) => {
     if (type === 'reward') updateProfile({ rewards: profile.rewards.filter(r => r.id !== id) });
   };
 
-  const changeDate = (days) => {
-    const newDate = new Date(viewDate);
-    newDate.setDate(newDate.getDate() + days);
-    setViewDate(newDate);
+  const handleOverwriteStars = (newVal) => {
+    updateProfile({ stars: newVal });
+    showNotification("星星数量已修改");
   };
 
-  // --- 过滤当日可见任务 (安全优化) ---
   const visibleTasks = (profile.tasks || []).filter(task => {
     const rec = task.recurrence || { type: 'daily' };
     if (rec.type === 'daily') return true;
     if (rec.type === 'weekly') {
       const day = viewDate.getDay(); 
-      // 增加安全性检查: rec.value 必须存在且是数组
       return Array.isArray(rec.value) && rec.value.includes(day);
     }
     if (rec.type === 'monthly') {
@@ -624,8 +755,46 @@ const StarSystem = ({ user, profile, onBack }) => {
     return true;
   });
 
+  // --- 响应式布局组件 ---
+  
+  // 侧边栏导航 (Desktop)
+  const Sidebar = () => (
+    <div className="hidden md:flex flex-col w-72 bg-slate-800 border-r border-slate-700 h-screen sticky top-0">
+      <div className="p-6 border-b border-slate-700">
+        <button onClick={onBack} className="flex items-center gap-2 text-slate-400 hover:text-white mb-6 transition-colors">
+          <ArrowLeft className="w-5 h-5" /> 切换用户
+        </button>
+        <div className="flex flex-col items-center">
+          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-3xl font-bold shadow-lg mb-4 text-white">
+            {(profile.name && profile.name[0]) ? profile.name[0].toUpperCase() : '?'}
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">{profile.name}</h2>
+          <button 
+            onClick={() => !user.isAnonymous && setIsStarModalOpen(true)}
+            className="flex items-center gap-2 bg-slate-900 px-4 py-2 rounded-full border border-yellow-500/30 hover:bg-slate-800 transition-colors cursor-pointer"
+          >
+            <Star className="w-5 h-5 text-yellow-400 fill-yellow-400" />
+            <span className="text-2xl font-black text-yellow-400 font-mono">{profile.stars || 0}</span>
+            {!user.isAnonymous && <Settings className="w-3 h-3 text-slate-600 ml-1" />}
+          </button>
+        </div>
+      </div>
+      
+      <nav className="flex-1 p-4 space-y-2">
+        <NavButtonDesktop active={activeTab === 'tasks'} onClick={() => setActiveTab('tasks')} icon={<CalendarIcon />} label="日历任务" color="text-emerald-400" />
+        <NavButtonDesktop active={activeTab === 'penalties'} onClick={() => setActiveTab('penalties')} icon={<AlertCircle />} label="行为规范" color="text-red-400" />
+        <NavButtonDesktop active={activeTab === 'shop'} onClick={() => setActiveTab('shop')} icon={<Gift />} label="奖励兑换" color="text-purple-400" />
+        <NavButtonDesktop active={activeTab === 'manage'} onClick={() => setActiveTab('manage')} icon={<Edit3 />} label="管理设置" color="text-blue-400" />
+      </nav>
+      
+      <div className="p-4 border-t border-slate-700 text-xs text-center text-slate-500">
+        © 2024 比乐时成长系统
+      </div>
+    </div>
+  );
+
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-50 font-sans pb-24">
+    <div className="min-h-screen bg-slate-900 text-slate-50 font-sans flex flex-col md:flex-row">
       {notification && (
         <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 z-50 px-6 py-3 rounded-full shadow-lg font-bold animate-bounce
           ${notification.type === 'error' ? 'bg-red-500 text-white' : 'bg-yellow-400 text-yellow-900'}
@@ -634,151 +803,164 @@ const StarSystem = ({ user, profile, onBack }) => {
         </div>
       )}
 
-      {/* Header */}
-      <header className="bg-slate-800 border-b border-slate-700 sticky top-0 z-10 shadow-lg">
-        <div className="max-w-md mx-auto px-4 py-3">
-          <div className="flex justify-between items-center mb-2">
+      {/* 修改星星模态框 */}
+      <EditStarsModal 
+        isOpen={isStarModalOpen}
+        onClose={() => setIsStarModalOpen(false)}
+        onConfirm={handleOverwriteStars}
+        currentStars={profile.stars || 0}
+        userEmail={user.email}
+      />
+
+      {/* 左侧边栏 (仅 Desktop/Tablet 显示) */}
+      <Sidebar />
+
+      {/* 主要内容区域 */}
+      <div className="flex-1 flex flex-col min-h-0 overflow-auto">
+        
+        {/* Mobile Header (仅 Mobile 显示) */}
+        <header className="md:hidden bg-slate-800 border-b border-slate-700 sticky top-0 z-10 shadow-lg">
+          <div className="px-4 py-3 flex justify-between items-center">
             <button onClick={onBack} className="p-2 -ml-2 text-slate-400 hover:text-white rounded-full">
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <div className="flex items-center gap-2 bg-slate-900 px-4 py-1.5 rounded-full border border-yellow-500/30">
+            <button 
+              onClick={() => !user.isAnonymous && setIsStarModalOpen(true)}
+              className="flex items-center gap-2 bg-slate-900 px-4 py-1.5 rounded-full border border-yellow-500/30 active:scale-95 transition-transform"
+            >
               <Star className="w-5 h-5 text-yellow-400 fill-yellow-400" />
-              <span className="text-2xl font-black text-yellow-400 font-mono">{profile.stars || 0}</span>
-            </div>
+              <span className="text-xl font-black text-yellow-400 font-mono">{profile.stars || 0}</span>
+            </button>
           </div>
+        </header>
+
+        <main className="flex-1 p-4 md:p-8 max-w-7xl mx-auto w-full pb-24 md:pb-8">
           
-          <div className="flex items-center justify-between bg-slate-900/50 rounded-lg p-1">
-            <button onClick={() => changeDate(-1)} className="p-2 hover:bg-slate-700 rounded-md text-slate-400"><ChevronLeft className="w-5 h-5" /></button>
-            <div className="flex flex-col items-center">
-              <span className="font-bold text-slate-200 text-sm">
-                {viewDate.getFullYear()}/{viewDate.getMonth() + 1}/{viewDate.getDate()}
-              </span>
-              <span className="text-xs text-slate-500">
-                {isToday ? '今天' : getWeekDayName(viewDate.getDay())}
-              </span>
-            </div>
-            <button onClick={() => changeDate(1)} className="p-2 hover:bg-slate-700 rounded-md text-slate-400"><ChevronRight className="w-5 h-5" /></button>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-md mx-auto p-4 space-y-6">
-        
-        {activeTab === 'tasks' && (
-          <div className="space-y-4">
-            <h2 className="text-lg font-bold flex items-center gap-2 text-emerald-400">
-              <Calendar className="w-5 h-5" />
-              {isToday ? '今日待办' : `${viewDate.getMonth()+1}月${viewDate.getDate()}日 待办`}
-            </h2>
-            
-            {visibleTasks.length === 0 && (
-              <div className="text-center text-slate-500 py-10 bg-slate-800/30 rounded-xl border border-dashed border-slate-700">
-                今天没有安排任务哦
-              </div>
-            )}
-
-            {visibleTasks.map(task => {
-              const isDone = (task.completedDates || []).includes(viewDateStr);
-              return (
-                <div 
-                  key={task.id} 
-                  className={`p-4 rounded-xl border-2 transition-all duration-300 flex justify-between items-center
-                    ${isDone 
-                      ? 'bg-slate-800/50 border-emerald-900/30 opacity-60' 
-                      : 'bg-slate-800 border-slate-700 hover:border-emerald-500'
-                    }`}
-                >
-                  <div>
-                    <div className={`font-bold text-lg ${isDone ? 'line-through text-slate-500' : 'text-slate-100'}`}>
-                      {task.title}
-                    </div>
-                    <div className="text-xs text-slate-400 flex items-center gap-2 mt-1">
-                      <span className="flex items-center gap-1 text-yellow-500"><Star className="w-3 h-3" /> +{task.points}</span>
-                      {task.recurrence?.type !== 'daily' && (
-                        <span className="bg-slate-700 px-1.5 rounded text-[10px] text-slate-300">
-                          {task.recurrence.type === 'weekly' ? '每周循环' : '每月循环'}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleTaskComplete(task.id)}
-                    disabled={isDone}
-                    className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95
-                      ${isDone 
-                        ? 'bg-emerald-900/20 text-emerald-700 cursor-not-allowed' 
-                        : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20'
-                      }`}
-                  >
-                    {isDone ? '完成' : '打卡'}
-                  </button>
+          {activeTab === 'tasks' && (
+            <div className="h-full flex flex-col gap-6">
+              {/* Desktop下采用左右横排布局: 左日历，右任务 */}
+              <div className="flex flex-col md:flex-row gap-6 md:h-[calc(100vh-100px)]">
+                {/* 日历区域 */}
+                <div className="md:w-96 shrink-0">
+                   <MonthCalendar viewDate={viewDate} onChangeDate={setViewDate} hasTasksMap={{}} />
                 </div>
-              );
-            })}
-          </div>
-        )}
+                
+                {/* 任务列表区域 */}
+                <div className="flex-1 flex flex-col min-h-0 bg-slate-800/30 rounded-2xl md:p-6 md:border md:border-slate-700/50 md:overflow-y-auto">
+                   <h2 className="text-xl font-bold flex items-center gap-2 text-emerald-400 mb-6 sticky top-0 bg-slate-900/95 md:bg-transparent p-2 md:p-0 z-10 backdrop-blur-sm">
+                    <CalendarIcon className="w-6 h-6" />
+                    {isToday ? '今日待办' : `${viewDate.getMonth()+1}月${viewDate.getDate()}日 待办`}
+                   </h2>
+                  
+                   {visibleTasks.length === 0 && (
+                    <div className="flex-1 flex flex-col items-center justify-center text-slate-500 py-10 bg-slate-800/30 rounded-xl border border-dashed border-slate-700">
+                      <div className="bg-slate-800 p-4 rounded-full mb-3"><LayoutDashboard className="w-8 h-8 opacity-50"/></div>
+                      今天没有安排任务哦
+                    </div>
+                   )}
 
-        {activeTab === 'penalties' && (
-          <div className="space-y-6">
-            <section>
-              <h2 className="text-lg font-bold flex items-center gap-2 text-red-400 mb-4">
-                <AlertCircle className="w-5 h-5" /> 行为规范
-              </h2>
-              <div className="grid gap-3">
-                {(profile.penalties || []).map(item => (
-                  <div key={item.id} className="bg-slate-800 p-4 rounded-xl border border-slate-700 flex justify-between items-center">
-                    <span className="font-bold text-slate-200">{item.title}</span>
-                    <button
-                      onClick={() => handlePenalty(item)}
-                      className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/50 px-4 py-2 rounded-lg text-sm font-bold transition-all active:scale-95"
-                    >
-                      记录 -{item.cost}
-                    </button>
-                  </div>
-                ))}
+                   <div className="space-y-3">
+                     {visibleTasks.map(task => {
+                      const isDone = (task.completedDates || []).includes(viewDateStr);
+                      return (
+                        <div 
+                          key={task.id} 
+                          className={`p-4 rounded-xl border-2 transition-all duration-300 flex justify-between items-center group
+                            ${isDone 
+                              ? 'bg-slate-800/50 border-emerald-900/30 opacity-60' 
+                              : 'bg-slate-800 border-slate-700 hover:border-emerald-500 hover:shadow-lg hover:shadow-emerald-500/10'
+                            }`}
+                        >
+                          <div>
+                            <div className={`font-bold text-lg ${isDone ? 'line-through text-slate-500' : 'text-slate-100'}`}>
+                              {task.title}
+                            </div>
+                            <div className="text-xs text-slate-400 flex items-center gap-2 mt-1">
+                              <span className="flex items-center gap-1 text-yellow-500 font-mono"><Star className="w-3 h-3" /> +{task.points}</span>
+                              {task.recurrence?.type !== 'daily' && (
+                                <span className="bg-slate-700 px-1.5 rounded text-[10px] text-slate-300">
+                                  {task.recurrence.type === 'weekly' ? '每周循环' : '每月循环'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleTaskComplete(task.id)}
+                            disabled={isDone}
+                            className={`px-5 py-2.5 rounded-lg font-bold transition-all transform active:scale-95
+                              ${isDone 
+                                ? 'bg-emerald-900/20 text-emerald-700 cursor-not-allowed' 
+                                : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 group-hover:scale-105'
+                              }`}
+                          >
+                            {isDone ? '完成' : '打卡'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                   </div>
+                </div>
               </div>
-            </section>
+            </div>
+          )}
 
-            <HistoryList 
-              title="扣分记录" 
-              type="penalty" 
-              history={profile.history || []} 
-              onUndo={handleUndo} 
-            />
-          </div>
-        )}
-
-        {activeTab === 'shop' && (
-          <div className="space-y-6">
-             <section>
-                <h2 className="text-lg font-bold flex items-center gap-2 text-purple-400 mb-4">
-                  <Gift className="w-5 h-5" /> 兑换奖励
+          {activeTab === 'penalties' && (
+            <div className="grid md:grid-cols-[1fr_350px] gap-8 items-start">
+              <div className="space-y-6">
+                <h2 className="text-2xl font-bold flex items-center gap-2 text-red-400 mb-6">
+                  <AlertCircle className="w-7 h-7" /> 行为规范
                 </h2>
-                <div className="grid grid-cols-2 gap-3">
+                {/* 响应式网格布局 */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {(profile.penalties || []).map(item => (
+                    <div key={item.id} className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-col justify-between items-start gap-4 hover:border-red-500/50 hover:shadow-lg transition-all">
+                      <span className="font-bold text-slate-200 text-lg">{item.title}</span>
+                      <button
+                        onClick={() => handlePenalty(item)}
+                        className="w-full bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/50 px-4 py-2 rounded-lg text-sm font-bold transition-all active:scale-95"
+                      >
+                        记录 -{item.cost}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              {/* 历史记录侧边栏 (Desktop) */}
+              <div className="md:sticky md:top-6">
+                 <HistoryList title="近期扣分记录" type="penalty" history={profile.history || []} onUndo={handleUndo} />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'shop' && (
+            <div className="grid md:grid-cols-[1fr_350px] gap-8 items-start">
+              <div className="space-y-6">
+                 <h2 className="text-2xl font-bold flex items-center gap-2 text-purple-400 mb-6">
+                  <Gift className="w-7 h-7" /> 兑换奖励
+                </h2>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                   {(profile.rewards || []).map(item => {
                     const stars = profile.stars || 0;
                     const canAfford = stars >= item.cost;
                     const progress = Math.min((stars / item.cost) * 100, 100);
                     
                     return (
-                      <div key={item.id} className={`bg-slate-800 p-4 rounded-xl border-2 flex flex-col justify-between h-48 transition-all
-                        ${canAfford ? 'border-purple-500/50 hover:border-purple-400' : 'border-slate-700 opacity-80'}
+                      <div key={item.id} className={`bg-slate-800 p-5 rounded-2xl border-2 flex flex-col justify-between aspect-[3/4] transition-all hover:scale-105
+                        ${canAfford ? 'border-purple-500/50 hover:border-purple-400 hover:shadow-purple-500/20 shadow-lg' : 'border-slate-700 opacity-80'}
                       `}>
-                        <div className="font-bold text-center leading-tight mb-2 h-10 flex items-center justify-center">{item.title}</div>
-                        
-                        <div className="space-y-3">
-                          <div className="flex justify-center items-center gap-1 text-yellow-400 font-mono font-bold text-xl">
-                            <Star className="w-4 h-4 fill-yellow-400" /> {item.cost}
+                        <div className="font-bold text-center leading-tight h-12 flex items-center justify-center text-lg">{item.title}</div>
+                        <div className="space-y-4 w-full">
+                          <div className="flex justify-center items-center gap-1 text-yellow-400 font-mono font-bold text-2xl">
+                            <Star className="w-5 h-5 fill-yellow-400" /> {item.cost}
                           </div>
-                          
-                          <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden">
+                          <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
                             <div className="bg-purple-500 h-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
                           </div>
-
                           <button
                             onClick={() => handleRedeem(item)}
                             disabled={!canAfford}
-                            className={`w-full py-2 rounded-lg text-sm font-bold transition-transform active:scale-95
+                            className={`w-full py-2.5 rounded-xl text-sm font-bold transition-transform active:scale-95
                               ${canAfford 
                                 ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30' 
                                 : 'bg-slate-700 text-slate-500 cursor-not-allowed'
@@ -791,32 +973,31 @@ const StarSystem = ({ user, profile, onBack }) => {
                     );
                   })}
                 </div>
-            </section>
+              </div>
 
-            <HistoryList 
-              title="兑换记录" 
-              type="reward" 
-              history={profile.history || []} 
-              onUndo={handleUndo} 
+               {/* 历史记录侧边栏 (Desktop) */}
+               <div className="md:sticky md:top-6">
+                 <HistoryList title="近期兑换记录" type="reward" history={profile.history || []} onUndo={handleUndo} />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'manage' && (
+            <ManagementPanel 
+              tasks={profile.tasks || []} 
+              penalties={profile.penalties || []} 
+              rewards={profile.rewards || []}
+              onAdd={handleAddItem}
+              onDelete={handleDeleteItem}
             />
-          </div>
-        )}
+          )}
+        </main>
+      </div>
 
-        {activeTab === 'manage' && (
-          <ManagementPanel 
-            tasks={profile.tasks || []} 
-            penalties={profile.penalties || []} 
-            rewards={profile.rewards || []}
-            onAdd={handleAddItem}
-            onDelete={handleDeleteItem}
-          />
-        )}
-      </main>
-
-      {/* Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 w-full bg-slate-800 border-t border-slate-700 pb-safe z-40">
+      {/* Mobile Bottom Nav (仅 Mobile 显示) */}
+      <nav className="md:hidden fixed bottom-0 left-0 w-full bg-slate-800 border-t border-slate-700 pb-safe z-40 shadow-[0_-5px_20px_rgba(0,0,0,0.3)]">
         <div className="max-w-md mx-auto flex justify-around items-center h-16">
-          <NavButton active={activeTab === 'tasks'} onClick={() => setActiveTab('tasks')} icon={<CheckCircle />} label="日历" color="text-emerald-400" />
+          <NavButton active={activeTab === 'tasks'} onClick={() => setActiveTab('tasks')} icon={<CalendarIcon />} label="日历" color="text-emerald-400" />
           <NavButton active={activeTab === 'penalties'} onClick={() => setActiveTab('penalties')} icon={<AlertCircle />} label="规范" color="text-red-400" />
           <NavButton active={activeTab === 'shop'} onClick={() => setActiveTab('shop')} icon={<Gift />} label="兑换" color="text-purple-400" />
           <NavButton active={activeTab === 'manage'} onClick={() => setActiveTab('manage')} icon={<Edit3 />} label="管理" color="text-blue-400" />
@@ -826,33 +1007,24 @@ const StarSystem = ({ user, profile, onBack }) => {
   );
 };
 
+// --- 子组件 (样式优化) ---
+
 const HistoryList = ({ title, type, history, onUndo }) => {
   const filtered = history.filter(h => h.type === type);
   if (filtered.length === 0) return null;
-
   return (
-    <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
-      <h3 className="text-sm font-bold text-slate-400 mb-3 flex items-center gap-2">
-        <Clock className="w-4 h-4" /> {title}
-      </h3>
-      <div className="space-y-3 max-h-60 overflow-y-auto">
+    <div className="bg-slate-800/80 rounded-2xl p-5 border border-slate-700/50 shadow-lg backdrop-blur-md">
+      <h3 className="text-sm font-bold text-slate-400 mb-4 flex items-center gap-2 uppercase tracking-wider"><Clock className="w-4 h-4" /> {title}</h3>
+      <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
         {filtered.map(log => (
-          <div key={log.id} className="flex justify-between items-center text-sm">
+          <div key={log.id} className="flex justify-between items-center text-sm p-2 hover:bg-slate-700/30 rounded-lg transition-colors">
             <div>
-              <div className="text-slate-300">{log.title}</div>
-              <div className="text-xs text-slate-500">{new Date(log.date).toLocaleString()}</div>
+              <div className="text-slate-200 font-medium">{log.title}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{new Date(log.date).toLocaleString()}</div>
             </div>
             <div className="flex items-center gap-3">
-              <span className={`font-mono font-bold ${type === 'penalty' ? 'text-red-400' : 'text-purple-400'}`}>
-                {type === 'penalty' ? `-${log.cost}` : `-${log.cost}`}
-              </span>
-              <button 
-                onClick={() => onUndo(log)}
-                className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-white rounded-md transition-colors"
-                title="撤销此操作"
-              >
-                <RotateCcw className="w-3 h-3" />
-              </button>
+              <span className={`font-mono font-bold ${type === 'penalty' ? 'text-red-400' : 'text-purple-400'}`}>{`-${log.cost}`}</span>
+              <button onClick={() => onUndo(log)} className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-white rounded-md transition-colors" title="撤销"><RotateCcw className="w-3.5 h-3.5" /></button>
             </div>
           </div>
         ))}
@@ -861,17 +1033,25 @@ const HistoryList = ({ title, type, history, onUndo }) => {
   );
 };
 
+// Mobile Nav Button
 const NavButton = ({ active, onClick, icon, label, color }) => (
+  <button onClick={onClick} className={`flex flex-col items-center justify-center w-full h-full transition-colors ${active ? color : 'text-slate-500 hover:text-slate-300'}`}>
+    <div className={`transform transition-transform duration-200 ${active ? 'scale-110 -translate-y-1' : ''}`}>{React.cloneElement(icon, { size: 24 })}</div>
+    <span className="text-[10px] font-bold mt-1">{label}</span>
+  </button>
+);
+
+// Desktop Sidebar Nav Button
+const NavButtonDesktop = ({ active, onClick, icon, label, color }) => (
   <button 
     onClick={onClick} 
-    className={`flex flex-col items-center justify-center w-full h-full transition-colors
-      ${active ? color : 'text-slate-500 hover:text-slate-300'}
+    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm
+      ${active ? 'bg-slate-700 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}
     `}
   >
-    <div className={`transform transition-transform ${active ? 'scale-110' : ''}`}>
-      {React.cloneElement(icon, { size: 24 })}
-    </div>
-    <span className="text-[10px] font-bold mt-1">{label}</span>
+    <div className={`${active ? color : 'text-slate-500'}`}>{React.cloneElement(icon, { size: 20 })}</div>
+    <span>{label}</span>
+    {active && <div className={`ml-auto w-1.5 h-1.5 rounded-full ${color.replace('text', 'bg')}`}></div>}
   </button>
 );
 
@@ -879,7 +1059,6 @@ const ManagementPanel = ({ tasks, penalties, rewards, onAdd, onDelete }) => {
   const [section, setSection] = useState('task'); 
   const [newTitle, setNewTitle] = useState('');
   const [newVal, setNewVal] = useState('');
-  
   const [recurType, setRecurType] = useState('daily'); 
   const [recurDays, setRecurDays] = useState([]); 
 
@@ -887,9 +1066,7 @@ const ManagementPanel = ({ tasks, penalties, rewards, onAdd, onDelete }) => {
     e.preventDefault();
     if (!newTitle || !newVal) return;
     const val = parseInt(newVal);
-    
     let itemData = { title: newTitle };
-
     if (section === 'task') {
       itemData.points = val;
       itemData.recurrence = { type: recurType };
@@ -899,7 +1076,6 @@ const ManagementPanel = ({ tasks, penalties, rewards, onAdd, onDelete }) => {
       itemData.cost = val;
       onAdd(section === 'penalty' ? 'penalty' : 'reward', itemData);
     }
-
     setNewTitle('');
     setNewVal('');
     setRecurDays([]);
@@ -907,114 +1083,85 @@ const ManagementPanel = ({ tasks, penalties, rewards, onAdd, onDelete }) => {
   };
 
   const toggleDay = (day) => {
-    if (recurDays.includes(day)) {
-      setRecurDays(recurDays.filter(d => d !== day));
-    } else {
-      setRecurDays([...recurDays, day]);
-    }
+    if (recurDays.includes(day)) { setRecurDays(recurDays.filter(d => d !== day)); } else { setRecurDays([...recurDays, day]); }
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-      <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-xl">
-        <h3 className="font-bold text-slate-300 mb-3">添加项目</h3>
-        <div className="flex gap-2 mb-4 bg-slate-900 p-1 rounded-lg">
-          <button onClick={() => setSection('task')} className={`flex-1 py-1 text-sm rounded-md ${section==='task' ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}>任务</button>
-          <button onClick={() => setSection('penalty')} className={`flex-1 py-1 text-sm rounded-md ${section==='penalty' ? 'bg-red-600 text-white' : 'text-slate-400'}`}>扣分</button>
-          <button onClick={() => setSection('reward')} className={`flex-1 py-1 text-sm rounded-md ${section==='reward' ? 'bg-purple-600 text-white' : 'text-slate-400'}`}>奖励</button>
+    <div className="grid lg:grid-cols-[1fr_400px] gap-8 items-start animate-in fade-in slide-in-from-bottom-4">
+      <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl">
+        <h3 className="font-bold text-slate-200 mb-6 flex items-center gap-2 text-lg"><Plus className="w-5 h-5 text-blue-500"/> 添加新项目</h3>
+        <div className="flex gap-2 mb-6 bg-slate-900 p-1.5 rounded-xl">
+          <button onClick={() => setSection('task')} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${section==='task' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>任务</button>
+          <button onClick={() => setSection('penalty')} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${section==='penalty' ? 'bg-red-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>扣分</button>
+          <button onClick={() => setSection('reward')} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${section==='reward' ? 'bg-purple-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>奖励</button>
         </div>
 
-        <form onSubmit={handleAdd} className="flex flex-col gap-3">
-          <input 
-            type="text" 
-            placeholder="名称"
-            className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-          />
+        <form onSubmit={handleAdd} className="flex flex-col gap-5">
+          <div>
+            <label className="text-xs text-slate-400 mb-1.5 block ml-1">名称</label>
+            <input type="text" placeholder="例如：练习写字" className="w-full bg-slate-700/50 border border-slate-600 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:bg-slate-700 transition-colors" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
+          </div>
           
           {section === 'task' && (
-            <div className="bg-slate-700/50 p-3 rounded-lg space-y-2">
+            <div className="bg-slate-700/30 p-4 rounded-xl border border-slate-700/50 space-y-3">
+              <label className="text-xs text-slate-400 block">循环方式</label>
               <div className="flex gap-2 text-xs">
-                <button type="button" onClick={() => setRecurType('daily')} className={`px-2 py-1 rounded ${recurType==='daily' ? 'bg-blue-600 text-white' : 'bg-slate-600 text-slate-300'}`}>每天</button>
-                <button type="button" onClick={() => setRecurType('weekly')} className={`px-2 py-1 rounded ${recurType==='weekly' ? 'bg-blue-600 text-white' : 'bg-slate-600 text-slate-300'}`}>每周</button>
-                <button type="button" onClick={() => setRecurType('monthly')} className={`px-2 py-1 rounded ${recurType==='monthly' ? 'bg-blue-600 text-white' : 'bg-slate-600 text-slate-300'}`}>每月</button>
+                <button type="button" onClick={() => setRecurType('daily')} className={`px-3 py-1.5 rounded-lg border transition-all ${recurType==='daily' ? 'bg-blue-500/20 border-blue-500 text-blue-400' : 'border-transparent bg-slate-700 text-slate-400'}`}>每天</button>
+                <button type="button" onClick={() => setRecurType('weekly')} className={`px-3 py-1.5 rounded-lg border transition-all ${recurType==='weekly' ? 'bg-blue-500/20 border-blue-500 text-blue-400' : 'border-transparent bg-slate-700 text-slate-400'}`}>每周</button>
+                <button type="button" onClick={() => setRecurType('monthly')} className={`px-3 py-1.5 rounded-lg border transition-all ${recurType==='monthly' ? 'bg-blue-500/20 border-blue-500 text-blue-400' : 'border-transparent bg-slate-700 text-slate-400'}`}>每月</button>
               </div>
-
               {recurType === 'weekly' && (
-                <div className="flex justify-between gap-1">
+                <div className="flex justify-between gap-1 mt-2">
                   {['日','一','二','三','四','五','六'].map((d, idx) => (
-                    <button 
-                      key={idx} 
-                      type="button"
-                      onClick={() => toggleDay(idx)}
-                      className={`w-8 h-8 rounded-full text-xs font-bold ${recurDays.includes(idx) ? 'bg-emerald-500 text-white' : 'bg-slate-600 text-slate-400'}`}
-                    >
-                      {d}
-                    </button>
+                    <button key={idx} type="button" onClick={() => toggleDay(idx)} className={`w-9 h-9 rounded-full text-xs font-bold transition-all ${recurDays.includes(idx) ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}`}>{d}</button>
                   ))}
                 </div>
               )}
-
               {recurType === 'monthly' && (
-                <input 
-                  type="number" 
-                  min="1" max="31"
-                  placeholder="几号 (例如 15)"
-                  className="w-full bg-slate-600 rounded px-2 py-1 text-sm"
-                  onChange={(e) => setRecurDays([parseInt(e.target.value)])}
-                />
+                <input type="number" min="1" max="31" placeholder="几号 (例如 15)" className="w-full bg-slate-600 rounded-lg px-3 py-2 text-sm mt-2 focus:outline-none focus:ring-2 focus:ring-blue-500" onChange={(e) => setRecurDays([parseInt(e.target.value)])} />
               )}
             </div>
           )}
-
-          <div className="flex gap-2">
-            <input 
-              type="number" 
-              placeholder="分值"
-              className="w-24 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-              value={newVal}
-              onChange={(e) => setNewVal(e.target.value)}
-            />
-            <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg flex items-center justify-center gap-2">
-              <Plus className="w-4 h-4" /> 添加
-            </button>
+          
+          <div className="flex gap-4">
+             <div className="w-32">
+                <label className="text-xs text-slate-400 mb-1.5 block ml-1">{section === 'task' ? '获得星星' : '消耗星星'}</label>
+                <input type="number" placeholder="0" className="w-full bg-slate-700/50 border border-slate-600 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors" value={newVal} onChange={(e) => setNewVal(e.target.value)} />
+             </div>
+            <div className="flex-1 flex items-end">
+              <button type="submit" className="w-full h-[50px] bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 transition-all active:scale-95"><Plus className="w-5 h-5" /> 立即添加</button>
+            </div>
           </div>
         </form>
       </div>
 
       <div className="space-y-6">
-        <ManageList title="当前任务库" items={tasks} type="task" onDelete={onDelete} color="text-emerald-400" />
-        <ManageList title="当前扣分项" items={penalties} type="penalty" onDelete={onDelete} color="text-red-400" />
-        <ManageList title="当前奖励库" items={rewards} type="reward" onDelete={onDelete} color="text-purple-400" />
+        <h3 className="font-bold text-slate-400 flex items-center gap-2"><LayoutDashboard className="w-5 h-5"/> 当前配置库</h3>
+        <ManageList title="任务库" items={tasks} type="task" onDelete={onDelete} color="text-emerald-400" />
+        <ManageList title="扣分项" items={penalties} type="penalty" onDelete={onDelete} color="text-red-400" />
+        <ManageList title="奖励库" items={rewards} type="reward" onDelete={onDelete} color="text-purple-400" />
       </div>
     </div>
   );
 };
 
 const ManageList = ({ title, items, type, onDelete, color }) => (
-  <div>
-    <h4 className={`font-bold text-sm mb-2 ${color}`}>{title}</h4>
-    <div className="space-y-2">
+  <div className="bg-slate-800/50 rounded-xl p-1 border border-slate-700/50">
+    <div className={`px-4 py-2 text-xs font-bold uppercase tracking-wider ${color}`}>{title}</div>
+    <div className="divide-y divide-slate-700/50">
       {items.map(item => (
-        <div key={item.id} className="flex justify-between items-center bg-slate-800/50 px-3 py-2 rounded-lg border border-slate-700/50">
+        <div key={item.id} className="flex justify-between items-center px-4 py-3 hover:bg-slate-700/30 transition-colors first:rounded-t-lg last:rounded-b-lg">
           <div>
-            <span className="text-slate-300 text-sm block">{item.title}</span>
-            {type === 'task' && item.recurrence && item.recurrence.type !== 'daily' && (
-              <span className="text-[10px] text-slate-500 uppercase">{item.recurrence.type}</span>
-            )}
+            <span className="text-slate-300 text-sm font-medium block">{item.title}</span>
+            {type === 'task' && item.recurrence && item.recurrence.type !== 'daily' && (<span className="text-[10px] text-slate-500 uppercase bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">{item.recurrence.type === 'weekly' ? '每周' : '每月'}</span>)}
           </div>
-          <div className="flex items-center gap-3">
-             <span className="text-slate-400 text-xs font-mono">
-               {type === 'task' ? `+${item.points}` : `-${item.cost}`}
-             </span>
-            <button onClick={() => onDelete(type, item.id)} className="text-slate-500 hover:text-red-400">
-              <Trash2 className="w-4 h-4" />
-            </button>
+          <div className="flex items-center gap-4">
+             <span className="text-slate-400 text-sm font-mono font-bold bg-slate-800 px-2 py-1 rounded">{type === 'task' ? `+${item.points}` : `-${item.cost}`}</span>
+            <button onClick={() => onDelete(type, item.id)} className="text-slate-600 hover:text-red-400 transition-colors p-1"><Trash2 className="w-4 h-4" /></button>
           </div>
         </div>
       ))}
-      {items.length === 0 && <div className="text-xs text-slate-600 italic">列表为空</div>}
+      {items.length === 0 && <div className="p-4 text-xs text-slate-600 italic text-center">列表为空</div>}
     </div>
   </div>
 );
