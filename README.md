@@ -135,12 +135,6 @@ npm run build
 npm run lint
 ```
 
-## 管理员账户
-
-默认管理员账户：
-- 账户：AdminTsou
-- 密码：Sqxwxq202401zcH
-
 ## 项目特色
 
 1. **响应式设计**：适配不同屏幕尺寸
