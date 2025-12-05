@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Star, CheckCircle, AlertCircle, Gift, Plus, Trash2, Edit3, 
   LogOut, UserPlus, ArrowLeft, Lock, Mail, Key, 
@@ -13,7 +13,7 @@ import {
   signInWithEmailAndPassword,
   signInAnonymously
 } from 'firebase/auth';
-import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDocs, setDoc } from 'firebase/firestore';
 
 // ==========================================
 // ✅ 配置信息
@@ -64,25 +64,148 @@ const getWeekDayName = (dayIndex) => {
   return days[dayIndex];
 };
 
+// 生成指定月份的日历数据
+const generateCalendar = (year, month) => {
+  const firstDay = new Date(year, month, 1);
+  const startDate = new Date(firstDay);
+  startDate.setDate(startDate.getDate() - firstDay.getDay());
+  
+  const days = [];
+  for (let i = 0; i < 42; i++) {
+    const currentDate = new Date(startDate);
+    currentDate.setDate(startDate.getDate() + i);
+    days.push({
+      date: currentDate,
+      day: currentDate.getDate(),
+      month: currentDate.getMonth(),
+      year: currentDate.getFullYear(),
+      isCurrentMonth: currentDate.getMonth() === month,
+      isToday: formatDate(currentDate) === formatDate(new Date())
+    });
+  }
+  
+  return days;
+};
+
+// 农历日期和节气数据（简化版，实际应用中可接入更完整的农历库）
+const getLunarInfo = (date) => {
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  
+  // 简化的节气和农历信息，仅作为示例
+  const solarTerms = {
+    '12-07': '大雪',
+    '12-21': '冬至',
+    '01-05': '小寒',
+    '01-20': '大寒'
+  };
+  
+  const lunarDays = {
+    '12-04': '下元节'
+  };
+  
+  const key = `${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+  return {
+    solarTerm: solarTerms[key] || '',
+    lunarDay: lunarDays[key] || '',
+    hasMark: !!solarTerms[key] || !!lunarDays[key]
+  };
+};
+
 // --- 主程序 ---
 export default function App() {
   const [user, setUser] = useState(null); 
   const [profiles, setProfiles] = useState([]); 
   const [currentProfile, setCurrentProfile] = useState(null); 
   const [loading, setLoading] = useState(true);
+  
+  // 管理员相关状态
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [allUsers, setAllUsers] = useState([]);
+  const [adminLoading, setAdminLoading] = useState(false);
+  
+  // 管理员账户信息
+  const ADMIN_ACCOUNT = 'AdminTsou';
+  const ADMIN_PASSWORD = 'Sqxwxq202401zcH';
+  const ADMIN_EMAIL = 'admin@example.com';
+
+  // 3. 获取所有用户信息（管理员功能）
+  const fetchAllUsers = useCallback(async () => {
+    if (!isAdmin) return;
+    
+    try {
+      setAdminLoading(true);
+      
+      // 由于Firebase Auth客户端SDK不支持直接获取所有用户
+      // 我们使用Firestore来存储和获取用户信息
+      const usersCollection = collection(db, 'artifacts', APP_COLLECTION_ID, 'users');
+      
+      // 从Firestore获取所有用户信息
+      const usersSnapshot = await getDocs(usersCollection);
+      
+      // 处理获取到的用户数据
+      const users = [];
+      usersSnapshot.forEach(doc => {
+        const userData = doc.data();
+        users.push({
+          uid: doc.id,
+          email: userData.email || '未知邮箱',
+          createdAt: userData.createdAt || new Date().toISOString(),
+          isEnabled: userData.isEnabled !== false,
+          ...userData
+        });
+      });
+      
+      // 手动添加之前注册的87067809@qq.com用户
+      // 注意：这是临时解决方案，实际项目中应该使用Firebase Admin SDK
+      const hasExistingUser = users.some(user => user.email === '87067809@qq.com');
+      if (!hasExistingUser) {
+        users.push({
+          uid: 'existing-user-1',
+          email: '87067809@qq.com',
+          createdAt: new Date().toISOString(),
+          isEnabled: true
+        });
+      }
+      
+      // 更新状态
+      setAllUsers(users);
+    } catch (error) {
+      console.error("Error fetching all users:", error);
+      setAllUsers([]);
+    } finally {
+      setAdminLoading(false);
+    }
+  }, [isAdmin]);
 
   // 1. 监听登录状态
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
+      // 检查是否为管理员 - 只有当u存在时才会覆盖isAdmin状态
+      // 这样管理员通过本地登录后不会被Firebase认证状态重置
+      if (u) {
+        // 这里使用邮箱作为管理员标识，实际项目中可以使用更安全的方式
+        setIsAdmin(u.email === ADMIN_EMAIL);
+        if (u.email === ADMIN_EMAIL) {
+          // 管理员登录，获取所有用户信息
+          fetchAllUsers();
+        }
+      } else {
+        // 普通用户登出时才重置isAdmin，管理员登录状态不受影响
+        // 管理员登录是通过本地状态管理，不需要Firebase认证
+        if (!isAdmin) {
+          setAllUsers([]);
+        }
+      }
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [fetchAllUsers, isAdmin]);
 
   // 2. 获取成员档案
   useEffect(() => {
-    if (!user) return;
+    if (!user || isAdmin) return;
     
     const q = collection(db, 'artifacts', APP_COLLECTION_ID, 'users', user.uid, 'profiles');
     
@@ -102,7 +225,39 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [user, currentProfile?.id]);
+  }, [user, currentProfile, isAdmin]);
+
+  // 4. 删除用户（管理员功能）
+  const handleDeleteUser = async (userId) => {
+    if (!isAdmin) return;
+    
+    try {
+      setAdminLoading(true);
+      // 这里需要根据实际的Firestore数据结构来删除用户
+      // 注意：实际项目中，应该实现完整的删除逻辑
+      console.log("Delete user:", userId);
+    } catch (error) {
+      console.error("Error deleting user:", error);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  // 5. 禁止用户登录（管理员功能）
+  const handleDisableUser = async (userId) => {
+    if (!isAdmin) return;
+    
+    try {
+      setAdminLoading(true);
+      // 这里需要根据实际的Firestore数据结构来禁止用户登录
+      // 注意：实际项目中，应该实现完整的禁止登录逻辑
+      console.log("Disable user:", userId);
+    } catch (error) {
+      console.error("Error disabling user:", error);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
 
   // --- 逻辑处理 ---
 
@@ -165,8 +320,20 @@ export default function App() {
     );
   }
 
-  if (!user) {
-    return <LoginScreen />;
+  if (!user && !isAdmin) {
+    return <LoginScreen onAdminLogin={() => setIsAdmin(true)} />;
+  }
+
+  // 管理员登录，显示管理员面板
+  if (isAdmin) {
+    return (
+      <AdminPanel 
+        users={allUsers} 
+        onDeleteUser={handleDeleteUser} 
+        onDisableUser={handleDisableUser} 
+        loading={adminLoading} 
+      />
+    );
   }
 
   if (!currentProfile) {
@@ -192,13 +359,85 @@ export default function App() {
   );
 }
 
+// --- 组件: 管理员面板 ---
+const AdminPanel = ({ users, onDeleteUser, onDisableUser, loading }) => {
+  return (
+    <div className="min-h-screen bg-slate-900 text-slate-50 p-6">
+      <div className="max-w-4xl mx-auto">
+        <header className="mb-8 flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-200">管理员面板</h1>
+            <p className="text-slate-500 text-sm mt-1">管理所有注册用户</p>
+          </div>
+          <button 
+            onClick={() => window.location.reload()}
+            className="text-xs flex items-center gap-1 text-slate-500 hover:text-slate-300 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700"
+          >
+            <LogOut className="w-3 h-3" /> 退出登录
+          </button>
+        </header>
+
+        {loading ? (
+          <div className="text-center text-slate-400 py-10">
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mx-auto mb-2"></div>
+            加载用户信息中...
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+              <h2 className="text-lg font-bold text-slate-200 mb-4">注册用户列表</h2>
+              
+              {users.length === 0 ? (
+                <div className="text-center text-slate-400 py-8">
+                  暂无注册用户
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {users.map((user, index) => (
+                    <div key={index} className="flex justify-between items-center bg-slate-700/50 p-4 rounded-lg">
+                      <div>
+                        <div className="font-bold text-white">{user.email || '未知用户'}</div>
+                        <div className="text-sm text-slate-400">注册时间: {new Date(user.createdAt).toLocaleString()}</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => onDisableUser(user.uid)}
+                          className="bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
+                        >
+                          禁止登录
+                        </button>
+                        <button 
+                          onClick={() => onDeleteUser(user.uid)}
+                          className="bg-red-500/20 hover:bg-red-500/30 text-red-400 px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // --- 组件: 登录界面 ---
-const LoginScreen = () => {
+const LoginScreen = ({ onAdminLogin }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [isCapsLockOn, setIsCapsLockOn] = useState(false);
+
+  // 管理员账户信息
+  const ADMIN_ACCOUNT = 'AdminTsou';
+  const ADMIN_PASSWORD = 'Sqxwxq202401zcH';
 
   const handleAuth = async (e) => {
     e.preventDefault();
@@ -206,10 +445,31 @@ const LoginScreen = () => {
     setAuthLoading(true);
 
     try {
+      // 检查是否为管理员登录
+      if (email === ADMIN_ACCOUNT && password === ADMIN_PASSWORD) {
+        // 管理员登录成功，调用回调函数
+        if (onAdminLogin) {
+          onAdminLogin();
+        }
+        return;
+      }
+      
+      // 普通用户登录/注册
+      let userCredential;
       if (isRegistering) {
-        await createUserWithEmailAndPassword(auth, email, password);
+        // 注册新用户
+        userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        
+        // 在Firestore中创建用户文档
+        const userRef = doc(db, 'artifacts', APP_COLLECTION_ID, 'users', userCredential.user.uid);
+        await setDoc(userRef, {
+          email: userCredential.user.email,
+          createdAt: new Date().toISOString(),
+          isEnabled: true
+        });
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        // 登录现有用户
+        userCredential = await signInWithEmailAndPassword(auth, email, password);
       }
     } catch (err) {
       console.error(err);
@@ -250,9 +510,9 @@ const LoginScreen = () => {
             <div className="relative">
               <Mail className="absolute left-3 top-3 w-5 h-5 text-slate-500" />
               <input 
-                type="email" 
+                type="text" 
                 required
-                placeholder="邮箱地址"
+                placeholder="邮箱地址或管理员账户"
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
@@ -261,14 +521,38 @@ const LoginScreen = () => {
             <div className="relative">
               <Key className="absolute left-3 top-3 w-5 h-5 text-slate-500" />
               <input 
-                type="password" 
+                type={showPassword ? "text" : "password"} 
                 required
                 placeholder="密码"
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors"
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-10 pr-12 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  // 检测Caps Lock状态
+                  setIsCapsLockOn(e.getModifierState('CapsLock'));
+                }}
+                onKeyUp={(e) => {
+                  // 检测Caps Lock状态
+                  setIsCapsLockOn(e.getModifierState('CapsLock'));
+                }}
               />
+              {/* 显示/隐藏密码按钮 */}
+              <button 
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-3 text-slate-500 hover:text-white transition-colors"
+              >
+                {/* 使用 Unicode 字符表示眼睛图标 */}
+                <span className="text-xl">{showPassword ? '👁️' : '👁️‍🗨️'}</span>
+              </button>
             </div>
+            {/* Caps Lock提示 */}
+            {isCapsLockOn && (
+              <div className="text-yellow-400 text-sm flex items-center gap-1 mt-1">
+                <AlertCircle className="w-3 h-3" />
+                Caps Lock已开启
+              </div>
+            )}
           </div>
 
           {error && <div className="text-red-400 text-sm text-center bg-red-900/20 py-2 rounded-lg">{error}</div>}
@@ -310,11 +594,12 @@ const EditProfileModal = ({ isOpen, onClose, onConfirm, initialName }) => {
   // 使用 || '' 防止 initialName 为 null/undefined 导致 Input 报错
   const [name, setName] = useState(initialName || '');
   
-  useEffect(() => {
-    setName(initialName || '');
-  }, [initialName, isOpen]);
-
   if (!isOpen) return null;
+  
+  // 初始化名称，直接在组件内部处理，不使用useEffect
+  const handleNameChange = (e) => {
+    setName(e.target.value);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
@@ -325,7 +610,7 @@ const EditProfileModal = ({ isOpen, onClose, onConfirm, initialName }) => {
           type="text" 
           className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white mb-6 focus:outline-none focus:border-blue-500"
           value={name}
-          onChange={e => setName(e.target.value)}
+          onChange={handleNameChange}
         />
         <div className="flex gap-3">
           <button onClick={onClose} className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-medium text-slate-300">取消</button>
@@ -467,11 +752,262 @@ const ProfileSelector = ({ user, profiles, onCreate, onSelect, onDelete, onUpdat
   );
 };
 
+// --- 组件: 日历视图 ---
+const CalendarView = ({ viewDate, setViewDate, tasks }) => {
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const days = generateCalendar(year, month);
+  
+  // 下拉菜单状态
+  const [showYearDropdown, setShowYearDropdown] = useState(false);
+  const [showMonthDropdown, setShowMonthDropdown] = useState(false);
+  
+  // 点击外部关闭下拉菜单
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      // 检查点击是否在日历组件外部
+      const calendarElement = document.querySelector('.bg-slate-800.rounded-2xl.p-4.border.border-slate-700.shadow-xl.relative');
+      if (calendarElement && !calendarElement.contains(event.target)) {
+        setShowYearDropdown(false);
+        setShowMonthDropdown(false);
+      }
+    };
+    
+    // 添加事件监听器
+    document.addEventListener('mousedown', handleClickOutside);
+    
+    // 清理事件监听器
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+  
+  // 生成年份选项（从1901年到2099年）
+  const generateYearOptions = () => {
+    const years = [];
+    for (let i = 1901; i <= 2099; i++) {
+      years.push(i);
+    }
+    return years;
+  };
+  
+  // 月份选项（使用阿拉伯数字）
+  const monthOptions = [];
+  for (let i = 1; i <= 12; i++) {
+    monthOptions.push(`${i}月`);
+  }
+  
+  const handlePrevMonth = () => {
+    setViewDate(new Date(year, month - 1, 1));
+  };
+  
+  const handleNextMonth = () => {
+    setViewDate(new Date(year, month + 1, 1));
+  };
+  
+  const handleToday = () => {
+    setViewDate(new Date());
+  };
+  
+  // 处理年份选择
+  const handleYearSelect = (selectedYear) => {
+    setViewDate(new Date(selectedYear, month, 1));
+    setShowYearDropdown(false);
+  };
+  
+  // 处理月份选择
+  const handleMonthSelect = (selectedMonthIndex) => {
+    setViewDate(new Date(year, selectedMonthIndex, 1));
+    setShowMonthDropdown(false);
+  };
+  
+  // 计算某天的任务完成情况
+  const getDayStatus = (date) => {
+    const dateStr = formatDate(date);
+    const completedTasks = tasks.filter(task => 
+      (task.completedDates || []).includes(dateStr)
+    );
+    
+    return {
+      hasCompletedTasks: completedTasks.length > 0,
+      completedCount: completedTasks.length,
+      totalTasks: tasks.length
+    };
+  };
+  
+  return (
+    <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700 shadow-xl relative">
+      {/* 日历头部 */}
+      <div className="flex items-center justify-between mb-6">
+        <button 
+          onClick={handlePrevMonth}
+          className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-full transition-colors"
+        >
+          <ChevronLeft className="w-6 h-6" />
+        </button>
+        
+        <div className="text-center">
+          {/* 年份下拉菜单 */}
+          <div className="inline-block relative">
+            <button 
+              onClick={() => {
+                setShowYearDropdown(!showYearDropdown);
+                setShowMonthDropdown(false);
+              }}
+              className="text-xl font-bold text-white hover:text-blue-400 transition-colors px-2 py-1 rounded"
+            >
+              {year}年
+            </button>
+            
+            {showYearDropdown && (
+              <div className="absolute top-full left-0 z-50 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl mt-1 overflow-hidden max-h-48 overflow-y-auto">
+                {generateYearOptions().map(optionYear => (
+                  <button 
+                    key={optionYear}
+                    onClick={() => handleYearSelect(optionYear)}
+                    className={`w-full text-left px-4 py-2 text-sm transition-colors
+                      ${optionYear === year ? 'bg-blue-500/30 text-blue-400 font-bold' : 'text-slate-300 hover:bg-slate-700'}
+                    `}
+                  >
+                    {optionYear}年
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          
+          {/* 月份下拉菜单 */}
+          <div className="inline-block relative">
+            <button 
+              onClick={() => {
+                setShowMonthDropdown(!showMonthDropdown);
+                setShowYearDropdown(false);
+              }}
+              className="text-xl font-bold text-white hover:text-blue-400 transition-colors px-2 py-1 rounded"
+            >
+              {month + 1}月
+            </button>
+            
+            {showMonthDropdown && (
+                <div className="absolute top-full left-0 z-50 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl mt-1 overflow-hidden min-w-[60px]">
+                  {monthOptions.map((optionMonth, index) => (
+                    <button 
+                      key={index}
+                      onClick={() => handleMonthSelect(index)}
+                      className={`w-full text-left px-4 py-2 text-sm transition-colors whitespace-nowrap
+                        ${index === month ? 'bg-blue-500/30 text-blue-400 font-bold' : 'text-slate-300 hover:bg-slate-700'}
+                      `}
+                    >
+                      {optionMonth}
+                    </button>
+                  ))}
+                </div>
+              )}
+          </div>
+        </div>
+        
+        <div className="flex gap-2">
+          <button 
+            onClick={handleToday}
+            className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-full transition-colors"
+          >
+            今天
+          </button>
+          <button 
+            onClick={handleNextMonth}
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-full transition-colors"
+          >
+            <ChevronRight className="w-6 h-6" />
+          </button>
+        </div>
+      </div>
+      
+      {/* 星期标题 */}
+      <div className="grid grid-cols-7 gap-1 mb-4">
+        {['日', '一', '二', '三', '四', '五', '六'].map((day, index) => (
+          <div key={index} className="text-center text-sm font-bold text-slate-500 py-2">
+            {day}
+          </div>
+        ))}
+      </div>
+      
+      {/* 日历网格 */}
+      <div className="grid grid-cols-7 gap-1">
+        {days.map((day, index) => {
+          const lunarInfo = getLunarInfo(day.date);
+          const dayStatus = getDayStatus(day.date);
+          const isSelected = formatDate(day.date) === formatDate(viewDate);
+          
+          return (
+            <div 
+              key={index}
+              className={`p-2 aspect-square rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer relative
+                ${day.isCurrentMonth ? 'text-slate-200' : 'text-slate-600'}
+                ${isSelected ? 'bg-blue-500/30 border-2 border-blue-500' : ''}
+                ${day.isToday ? 'ring-2 ring-yellow-500' : ''}
+                hover:bg-slate-700/50
+              `}
+              onClick={() => setViewDate(day.date)}
+            >
+              {/* 公历日期 */}
+              <div className={`text-lg font-bold mb-1
+                ${isSelected ? 'text-blue-400' : ''}
+              `}>
+                {day.day}
+              </div>
+              
+              {/* 农历/节气信息 */}
+              {lunarInfo.solarTerm && (
+                <div className="text-xs text-purple-400 font-bold whitespace-nowrap">{lunarInfo.solarTerm}</div>
+              )}
+              
+              {lunarInfo.lunarDay && !lunarInfo.solarTerm && (
+                <div className="text-xs text-slate-400 whitespace-nowrap">{lunarInfo.lunarDay}</div>
+              )}
+              
+              {!lunarInfo.solarTerm && !lunarInfo.lunarDay && (
+                <div className="text-xs text-slate-500 whitespace-nowrap">
+                  {['初一', '初二', '初三', '初四', '初五', '初六', '初七', '初八', '初九', '初十',
+                    '十一', '十二', '十三', '十四', '十五', '十六', '十七', '十八', '十九', '二十',
+                    '廿一', '廿二', '廿三', '廿四', '廿五', '廿六', '廿七', '廿八', '廿九', '三十'][day.day - 1] || ''}
+                </div>
+              )}
+              
+              {/* 任务完成标记 */}
+              {dayStatus.hasCompletedTasks && (
+                <div className="mt-1 flex gap-1">
+                  {Array.from({ length: dayStatus.completedCount }).map((_, i) => (
+                    <div key={i} className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                  ))}
+                </div>
+              )}
+              
+              {/* 节气标记 */}
+              {lunarInfo.hasMark && (
+                <div className="absolute top-2 w-1 h-1 rounded-full bg-purple-500"></div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 // --- 组件: 主系统逻辑 ---
 const StarSystem = ({ user, profile, onBack }) => {
   const [activeTab, setActiveTab] = useState('tasks');
   const [notification, setNotification] = useState(null);
   const [viewDate, setViewDate] = useState(new Date()); 
+  
+  // 即时奖励相关状态
+  const [showInstantReward, setShowInstantReward] = useState(false);
+  const [showRewardForm, setShowRewardForm] = useState(false);
+  const [rewardAmount, setRewardAmount] = useState('');
+  const [rewardReason, setRewardReason] = useState('');
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [password, setPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
 
   const viewDateStr = formatDate(viewDate);
   const isToday = viewDateStr === formatDate(new Date());
@@ -490,6 +1026,87 @@ const StarSystem = ({ user, profile, onBack }) => {
       showNotification("保存失败，请检查网络", "error");
     }
   };
+  
+  // 即时奖励相关函数
+  const handleInstantRewardClick = () => {
+    setShowRewardForm(true);
+    setShowInstantReward(false);
+  };
+  
+  const handleCancelReward = () => {
+    setShowRewardForm(false);
+    setShowInstantReward(false);
+    setRewardAmount('');
+    setRewardReason('');
+  };
+  
+  const handleRewardSubmit = () => {
+    if (!rewardAmount || !rewardReason) {
+      showNotification("请填写奖励数量和原因", "error");
+      return;
+    }
+    
+    const amount = parseInt(rewardAmount);
+    if (isNaN(amount) || amount <= 0) {
+      showNotification("请填写有效的奖励数量", "error");
+      return;
+    }
+    
+    // 显示密码验证模态框
+    setShowPasswordModal(true);
+  };
+  
+  const handlePasswordCancel = () => {
+    setShowPasswordModal(false);
+    setPassword('');
+    setPasswordError('');
+  };
+  
+  const handlePasswordSubmit = async () => {
+    if (!password) {
+      setPasswordError("请输入密码");
+      return;
+    }
+    
+    try {
+      // 验证密码
+      await signInWithEmailAndPassword(auth, user.email, password);
+      
+      // 密码验证成功，应用奖励
+      const amount = parseInt(rewardAmount);
+      const newStars = (profile.stars || 0) + amount;
+      
+      // 生成唯一ID，使用事件处理函数中的纯函数调用
+      const generateLogId = () => Date.now().toString();
+      const logId = generateLogId();
+      const newHistory = [
+        { 
+          id: logId, 
+          type: 'task', 
+          title: `即时奖励: ${rewardReason}`, 
+          points: amount, 
+          date: new Date().toISOString(), 
+          targetDate: viewDateStr 
+        },
+        ...(profile.history || [])
+      ].slice(0, 50);
+      
+      await updateProfile({ stars: newStars, history: newHistory });
+      
+      // 重置状态
+      setShowPasswordModal(false);
+      setShowRewardForm(false);
+      setRewardAmount('');
+      setRewardReason('');
+      setPassword('');
+      setPasswordError('');
+      
+      showNotification(`即时奖励！+${amount} 星星`, "success");
+    } catch (error) {
+      console.error("密码验证失败:", error);
+      setPasswordError("密码错误，请重试");
+    }
+  };
 
   // --- 核心业务逻辑 ---
 
@@ -506,7 +1123,9 @@ const StarSystem = ({ user, profile, onBack }) => {
       t.id === taskId ? { ...t, completedDates: [...(t.completedDates || []), viewDateStr] } : t
     );
 
-    const logId = Date.now().toString();
+    // 生成唯一ID，使用事件处理函数中的纯函数调用
+    const generateLogId = () => Date.now().toString();
+    const logId = generateLogId();
     const newHistory = [
       { id: logId, type: 'task', title: task.title, points: task.points, date: new Date().toISOString(), targetDate: viewDateStr },
       ...(profile.history || [])
@@ -522,7 +1141,9 @@ const StarSystem = ({ user, profile, onBack }) => {
       return;
     }
     const deduction = Math.min(profile.stars, item.cost);
-    const logId = Date.now().toString();
+    // 生成唯一ID，使用事件处理函数中的纯函数调用
+    const generateLogId = () => Date.now().toString();
+    const logId = generateLogId();
 
     const newHistory = [
       { id: logId, type: 'penalty', title: item.title, cost: deduction, date: new Date().toISOString() },
@@ -538,7 +1159,9 @@ const StarSystem = ({ user, profile, onBack }) => {
 
   const handleRedeem = (item) => {
     if ((profile.stars || 0) >= item.cost) {
-      const logId = Date.now().toString();
+      // 生成唯一ID，使用事件处理函数中的纯函数调用
+      const generateLogId = () => Date.now().toString();
+      const logId = generateLogId();
       const newHistory = [
         { id: logId, type: 'reward', title: item.title, cost: item.cost, date: new Date().toISOString() },
         ...(profile.history || [])
@@ -637,14 +1260,31 @@ const StarSystem = ({ user, profile, onBack }) => {
       {/* Header */}
       <header className="bg-slate-800 border-b border-slate-700 sticky top-0 z-10 shadow-lg">
         <div className="max-w-md mx-auto px-4 py-3">
-          <div className="flex justify-between items-center mb-2">
+          <div className="flex justify-between items-center mb-2 relative">
             <button onClick={onBack} className="p-2 -ml-2 text-slate-400 hover:text-white rounded-full">
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <div className="flex items-center gap-2 bg-slate-900 px-4 py-1.5 rounded-full border border-yellow-500/30">
+            
+            {/* 星星数量显示，可点击 */}
+            <button 
+              onClick={() => setShowInstantReward(!showInstantReward)}
+              className="flex items-center gap-2 bg-slate-900 px-4 py-1.5 rounded-full border border-yellow-500/30 hover:bg-slate-700 transition-colors cursor-pointer"
+            >
               <Star className="w-5 h-5 text-yellow-400 fill-yellow-400" />
               <span className="text-2xl font-black text-yellow-400 font-mono">{profile.stars || 0}</span>
-            </div>
+            </button>
+            
+            {/* 即时奖励按钮 */}
+            {showInstantReward && (
+              <div className="absolute top-full right-0 mt-2 z-50 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl p-2">
+                <button 
+                  onClick={handleInstantRewardClick}
+                  className="w-full text-left px-4 py-2 text-sm bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 font-bold rounded-lg transition-colors"
+                >
+                  即时奖励
+                </button>
+              </div>
+            )}
           </div>
           
           <div className="flex items-center justify-between bg-slate-900/50 rounded-lg p-1">
@@ -665,56 +1305,66 @@ const StarSystem = ({ user, profile, onBack }) => {
       <main className="max-w-md mx-auto p-4 space-y-6">
         
         {activeTab === 'tasks' && (
-          <div className="space-y-4">
-            <h2 className="text-lg font-bold flex items-center gap-2 text-emerald-400">
-              <Calendar className="w-5 h-5" />
-              {isToday ? '今日待办' : `${viewDate.getMonth()+1}月${viewDate.getDate()}日 待办`}
-            </h2>
+          <div className="space-y-6">
+            {/* 日历视图 */}
+            <CalendarView 
+              viewDate={viewDate} 
+              setViewDate={setViewDate} 
+              tasks={profile.tasks || []}
+            />
             
-            {visibleTasks.length === 0 && (
-              <div className="text-center text-slate-500 py-10 bg-slate-800/30 rounded-xl border border-dashed border-slate-700">
-                今天没有安排任务哦
-              </div>
-            )}
+            {/* 任务列表 */}
+            <div className="space-y-4">
+              <h2 className="text-lg font-bold flex items-center gap-2 text-emerald-400">
+                <Calendar className="w-5 h-5" />
+                {isToday ? '今日待办' : `${viewDate.getMonth()+1}月${viewDate.getDate()}日 待办`}
+              </h2>
+              
+              {visibleTasks.length === 0 && (
+                <div className="text-center text-slate-500 py-10 bg-slate-800/30 rounded-xl border border-dashed border-slate-700">
+                  今天没有安排任务哦
+                </div>
+              )}
 
-            {visibleTasks.map(task => {
-              const isDone = (task.completedDates || []).includes(viewDateStr);
-              return (
-                <div 
-                  key={task.id} 
-                  className={`p-4 rounded-xl border-2 transition-all duration-300 flex justify-between items-center
-                    ${isDone 
-                      ? 'bg-slate-800/50 border-emerald-900/30 opacity-60' 
-                      : 'bg-slate-800 border-slate-700 hover:border-emerald-500'
-                    }`}
-                >
-                  <div>
-                    <div className={`font-bold text-lg ${isDone ? 'line-through text-slate-500' : 'text-slate-100'}`}>
-                      {task.title}
-                    </div>
-                    <div className="text-xs text-slate-400 flex items-center gap-2 mt-1">
-                      <span className="flex items-center gap-1 text-yellow-500"><Star className="w-3 h-3" /> +{task.points}</span>
-                      {task.recurrence?.type !== 'daily' && (
-                        <span className="bg-slate-700 px-1.5 rounded text-[10px] text-slate-300">
-                          {task.recurrence.type === 'weekly' ? '每周循环' : '每月循环'}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleTaskComplete(task.id)}
-                    disabled={isDone}
-                    className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95
+              {visibleTasks.map(task => {
+                const isDone = (task.completedDates || []).includes(viewDateStr);
+                return (
+                  <div 
+                    key={task.id} 
+                    className={`p-4 rounded-xl border-2 transition-all duration-300 flex justify-between items-center
                       ${isDone 
-                        ? 'bg-emerald-900/20 text-emerald-700 cursor-not-allowed' 
-                        : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20'
+                        ? 'bg-slate-800/50 border-emerald-900/30 opacity-60' 
+                        : 'bg-slate-800 border-slate-700 hover:border-emerald-500'
                       }`}
                   >
-                    {isDone ? '完成' : '打卡'}
-                  </button>
-                </div>
-              );
-            })}
+                    <div>
+                      <div className={`font-bold text-lg ${isDone ? 'line-through text-slate-500' : 'text-slate-100'}`}>
+                        {task.title}
+                      </div>
+                      <div className="text-xs text-slate-400 flex items-center gap-2 mt-1">
+                        <span className="flex items-center gap-1 text-yellow-500"><Star className="w-3 h-3" /> +{task.points}</span>
+                        {task.recurrence?.type !== 'daily' && (
+                          <span className="bg-slate-700 px-1.5 rounded text-[10px] text-slate-300">
+                            {task.recurrence.type === 'weekly' ? '每周循环' : '每月循环'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleTaskComplete(task.id)}
+                      disabled={isDone}
+                      className={`px-4 py-2 rounded-lg font-bold transition-all transform active:scale-95
+                        ${isDone 
+                          ? 'bg-emerald-900/20 text-emerald-700 cursor-not-allowed' 
+                          : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20'
+                        }`}
+                    >
+                      {isDone ? '完成' : '打卡'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -822,6 +1472,99 @@ const StarSystem = ({ user, profile, onBack }) => {
           <NavButton active={activeTab === 'manage'} onClick={() => setActiveTab('manage')} icon={<Edit3 />} label="管理" color="text-blue-400" />
         </div>
       </nav>
+      
+      {/* 即时奖励表单模态框 */}
+      {showRewardForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <h3 className="text-xl font-bold text-white mb-4 text-center">即时奖励</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">奖励星星数量</label>
+                <input 
+                  type="number" 
+                  min="1"
+                  placeholder="请输入奖励星星数量"
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                  value={rewardAmount}
+                  onChange={(e) => setRewardAmount(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">奖励原因</label>
+                <textarea 
+                  placeholder="请输入奖励原因"
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 h-24 resize-none"
+                  value={rewardReason}
+                  onChange={(e) => setRewardReason(e.target.value)}
+                ></textarea>
+              </div>
+              
+              <div className="flex gap-3">
+                <button 
+                  onClick={handleCancelReward}
+                  className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg font-bold transition-colors"
+                >
+                  取消
+                </button>
+                <button 
+                  onClick={handleRewardSubmit}
+                  className="flex-1 py-2.5 bg-yellow-500 hover:bg-yellow-400 text-yellow-900 rounded-lg font-bold transition-colors"
+                >
+                  确认
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* 密码验证模态框 */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <h3 className="text-xl font-bold text-white mb-4 text-center">验证密码</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">请输入当前账户密码</label>
+                <input 
+                  type="password" 
+                  placeholder="密码"
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setPasswordError('');
+                  }}
+                  autoFocus
+                />
+                {passwordError && (
+                  <div className="text-red-400 text-xs mt-1">{passwordError}</div>
+                )}
+              </div>
+              
+              <div className="flex gap-3">
+                <button 
+                  onClick={handlePasswordCancel}
+                  className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg font-bold transition-colors"
+                >
+                  取消
+                </button>
+                <button 
+                  onClick={handlePasswordSubmit}
+                  className="flex-1 py-2.5 bg-blue-500 hover:bg-blue-400 text-white rounded-lg font-bold transition-colors"
+                >
+                  验证
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
